@@ -78,6 +78,7 @@ int main()
 
 	// Draw to the render target
 	d2dContext->BeginDraw();
+	d2dContext->Clear(D2D1::ColorF(0, 0));
 	d2dContext->PushLayer(D2D1::LayerParameters(D2D1::InfiniteRect(), pathGeometry.get()), nullptr);
 	d2dContext->DrawBitmap(d2dBitmap.get(), &D2D1::RectF(0, 0, 350, 350), 1.0f, D2D1_BITMAP_INTERPOLATION_MODE_LINEAR, &D2D1::RectF(350, 550, 700, 900));
 	d2dContext->PopLayer();
