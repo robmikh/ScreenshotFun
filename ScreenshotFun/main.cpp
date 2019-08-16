@@ -10,13 +10,14 @@ using namespace Windows::System;
 
 IAsyncAction SaveBitmapToFileAsync(com_ptr<ID2D1Device> const& d2dDevice, com_ptr<ID2D1Bitmap1> const& d2dBitmap, StorageFile const& file);
 com_ptr<ID3D11Texture2D> CreateTexture(com_ptr<ID3D11Device> const& d3dDevice, uint32_t width, uint32_t height);
-com_ptr<ID2D1PathGeometry> BuildGeometry(com_ptr<ID2D1Factory1> const& d2dFactory);
+com_ptr<ID2D1PathGeometry> BuildGeometry(com_ptr<ID2D1Factory1> const& d2dFactory, uint32_t width, uint32_t height);
 
 IAsyncAction MainAsync()
 {
     // Get the primary monitor
     auto monitor = MonitorFromWindow(GetDesktopWindow(), MONITOR_DEFAULTTOPRIMARY);
     auto item = CreateCaptureItemForMonitor(monitor);
+    auto itemSize = item.Size();
 
     // Get a file to save the screenshot
     auto currentPath = std::filesystem::current_path();
@@ -42,7 +43,9 @@ IAsyncAction MainAsync()
     check_hresult(d2dContext->CreateBitmapFromDxgiSurface(frameTexture.get(), nullptr, d2dBitmap.put()));
 
     // Create our render target
-    auto finalTexture = CreateTexture(d3dDevice, 350, 350);
+    auto renderTargetWidth = 350;
+    auto renderTargetHeight = 350;
+    auto finalTexture = CreateTexture(d3dDevice, renderTargetWidth, renderTargetHeight);
     auto dxgiFinalTexture = finalTexture.as<IDXGISurface>();
     com_ptr<ID2D1Bitmap1> d2dTargetBitmap;
     check_hresult(d2dContext->CreateBitmapFromDxgiSurface(dxgiFinalTexture.get(), nullptr, d2dTargetBitmap.put()));
@@ -51,13 +54,18 @@ IAsyncAction MainAsync()
     d2dContext->SetTarget(d2dTargetBitmap.get());
 
     // Create the geometry clip
-    auto geometry = BuildGeometry(d2dFactory);
+    auto geometry = BuildGeometry(d2dFactory, renderTargetWidth, renderTargetHeight);
+
+    // Compute the rect we want to copy from the snapshot bitmap
+    auto left = (itemSize.Width - renderTargetWidth) / 2.0f;
+    auto top = (itemSize.Height - renderTargetHeight) / 2.0f;
+    auto sourceRect = D2D1::RectF(left, top, left + renderTargetWidth, top + renderTargetHeight);
 
     // Draw to the render target
     d2dContext->BeginDraw();
     d2dContext->Clear(D2D1::ColorF(0, 0));
     d2dContext->PushLayer(D2D1::LayerParameters(D2D1::InfiniteRect(), geometry.get()), nullptr);
-    d2dContext->DrawBitmap(d2dBitmap.get(), &D2D1::RectF(0, 0, 350, 350), 1.0f, D2D1_BITMAP_INTERPOLATION_MODE_LINEAR, &D2D1::RectF(350, 550, 700, 900));
+    d2dContext->DrawBitmap(d2dBitmap.get(), &D2D1::RectF(0, 0, renderTargetWidth, renderTargetHeight), 1.0f, D2D1_BITMAP_INTERPOLATION_MODE_LINEAR, &sourceRect);
     d2dContext->PopLayer();
     check_hresult(d2dContext->EndDraw());
 
@@ -118,18 +126,23 @@ com_ptr<ID3D11Texture2D> CreateTexture(com_ptr<ID3D11Device> const& d3dDevice, u
     return texture;
 }
 
-com_ptr<ID2D1PathGeometry> BuildGeometry(com_ptr<ID2D1Factory1> const& d2dFactory)
+com_ptr<ID2D1PathGeometry> BuildGeometry(com_ptr<ID2D1Factory1> const& d2dFactory, uint32_t width, uint32_t height)
 {
+    // Build the proportions for our star
+    auto midHeight = height / 3.0f;
+    auto bottomRatio = width / 8.0f;
+    auto topRatio = width / 2.0f;
+
     com_ptr<ID2D1PathGeometry> pathGeometry;
     check_hresult(d2dFactory->CreatePathGeometry(pathGeometry.put()));
     com_ptr<ID2D1GeometrySink> geometrySink;
     check_hresult(pathGeometry->Open(geometrySink.put()));
     geometrySink->SetFillMode(D2D1_FILL_MODE_WINDING);
-    geometrySink->BeginFigure(D2D1::Point2F(20, 50), D2D1_FIGURE_BEGIN_FILLED);
-    geometrySink->AddLine(D2D1::Point2F(130, 50));
-    geometrySink->AddLine(D2D1::Point2F(20, 130));
-    geometrySink->AddLine(D2D1::Point2F(80, 0));
-    geometrySink->AddLine(D2D1::Point2F(130, 130));
+    geometrySink->BeginFigure(D2D1::Point2F(0, midHeight), D2D1_FIGURE_BEGIN_FILLED);
+    geometrySink->AddLine(D2D1::Point2F(width, midHeight));
+    geometrySink->AddLine(D2D1::Point2F(bottomRatio, height));
+    geometrySink->AddLine(D2D1::Point2F(topRatio, 0));
+    geometrySink->AddLine(D2D1::Point2F(7.0f * bottomRatio, height));
     geometrySink->EndFigure(D2D1_FIGURE_END_CLOSED);
     check_hresult(geometrySink->Close());
 
