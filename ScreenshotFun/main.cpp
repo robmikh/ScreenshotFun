@@ -3,21 +3,25 @@
 
 using namespace winrt;
 using namespace Windows::Foundation;
+using namespace Windows::Graphics::Capture;
+using namespace Windows::Graphics::DirectX::Direct3D11;
 using namespace Windows::Storage;
 using namespace Windows::System;
 
-int main()
-{
-    init_apartment();
+IAsyncAction SaveBitmapToFileAsync(com_ptr<ID2D1Device> const& d2dDevice, com_ptr<ID2D1Bitmap1> const& d2dBitmap, StorageFile const& file);
+com_ptr<ID3D11Texture2D> CreateTexture(com_ptr<ID3D11Device> const& d3dDevice, uint32_t width, uint32_t height);
+com_ptr<ID2D1PathGeometry> BuildGeometry(com_ptr<ID2D1Factory1> const& d2dFactory);
 
+IAsyncAction MainAsync()
+{
     // Get the primary monitor
     auto monitor = MonitorFromWindow(GetDesktopWindow(), MONITOR_DEFAULTTOPRIMARY);
     auto item = CreateCaptureItemForMonitor(monitor);
 
     // Get a file to save the screenshot
     auto currentPath = std::filesystem::current_path();
-    auto folder = StorageFolder::GetFolderFromPathAsync(currentPath.wstring()).get();
-    auto file = folder.CreateFileAsync(L"screenshot.png", CreationCollisionOption::ReplaceExisting).get();
+    auto folder = co_await StorageFolder::GetFolderFromPathAsync(currentPath.wstring());
+    auto file = co_await folder.CreateFileAsync(L"screenshot.png", CreationCollisionOption::ReplaceExisting);
 
     // Create graphics resources
     auto d3dDevice = CreateD3DDevice();
@@ -30,8 +34,7 @@ int main()
     check_hresult(d2dDevice->CreateDeviceContext(D2D1_DEVICE_CONTEXT_OPTIONS_NONE, d2dContext.put()));
 
     // Take a snapshot
-    auto asyncOperation = CaptureSnapshot::TakeAsync(device, item);
-    auto frame = asyncOperation.get(); // synchronous 
+    auto frame = co_await CaptureSnapshot::TakeAsync(device, item);  
     auto frameTexture = GetDXGIInterfaceFromObject<ID3D11Texture2D>(frame);
     D3D11_TEXTURE2D_DESC textureDesc = {};
     frameTexture->GetDesc(&textureDesc);
@@ -42,27 +45,84 @@ int main()
     check_hresult(d2dContext->CreateBitmapFromDxgiSurface(dxgiFrameTexture.get(), nullptr, d2dBitmap.put()));
 
     // Create our render target
-    D3D11_TEXTURE2D_DESC finalTextureDescription = {};
-    finalTextureDescription.Width = 350;
-    finalTextureDescription.Height = 350;
-    finalTextureDescription.MipLevels = 1;
-    finalTextureDescription.ArraySize = 1;
-    finalTextureDescription.Format = DXGI_FORMAT::DXGI_FORMAT_B8G8R8A8_UNORM;
-    finalTextureDescription.SampleDesc.Count = 1;
-    finalTextureDescription.SampleDesc.Quality = 0;
-    finalTextureDescription.Usage = D3D11_USAGE::D3D11_USAGE_DEFAULT;
-    finalTextureDescription.BindFlags = D3D11_BIND_FLAG::D3D11_BIND_RENDER_TARGET | D3D11_BIND_FLAG::D3D11_BIND_SHADER_RESOURCE;
-    finalTextureDescription.CPUAccessFlags = 0;
-    finalTextureDescription.MiscFlags = 0;
-    com_ptr<ID3D11Texture2D> finalTexture;
-    check_hresult(d3dDevice->CreateTexture2D(&finalTextureDescription, nullptr, finalTexture.put()));
+    auto finalTexture = CreateTexture(d3dDevice, 350, 350);
     auto dxgiFinalTexture = finalTexture.as<IDXGISurface>();
     com_ptr<ID2D1Bitmap1> d2dTargetBitmap;
     check_hresult(d2dContext->CreateBitmapFromDxgiSurface(dxgiFinalTexture.get(), nullptr, d2dTargetBitmap.put()));
+
     // Set the render target as our current target
     d2dContext->SetTarget(d2dTargetBitmap.get());
 
     // Create the geometry clip
+    auto geometry = BuildGeometry(d2dFactory);
+
+    // Draw to the render target
+    d2dContext->BeginDraw();
+    d2dContext->Clear(D2D1::ColorF(0, 0));
+    d2dContext->PushLayer(D2D1::LayerParameters(D2D1::InfiniteRect(), geometry.get()), nullptr);
+    d2dContext->DrawBitmap(d2dBitmap.get(), &D2D1::RectF(0, 0, 350, 350), 1.0f, D2D1_BITMAP_INTERPOLATION_MODE_LINEAR, &D2D1::RectF(350, 550, 700, 900));
+    d2dContext->PopLayer();
+    check_hresult(d2dContext->EndDraw());
+
+    co_await SaveBitmapToFileAsync(d2dDevice, d2dTargetBitmap, file);
+
+    printf("Done!\nOpening file...\n");
+    co_await Launcher::LaunchFileAsync(file);
+}
+
+int main()
+{
+    init_apartment();
+    MainAsync().get(); // synchronous
+    return 0;
+}
+
+IAsyncAction SaveBitmapToFileAsync(com_ptr<ID2D1Device> const& d2dDevice, com_ptr<ID2D1Bitmap1> const& d2dBitmap, StorageFile const& file)
+{
+    // Get the file stream
+    auto randomAccessStream = co_await file.OpenAsync(FileAccessMode::ReadWrite);
+    auto stream = CreateStreamFromRandomAccessStream(randomAccessStream);
+
+    // Encode the snapshot
+    auto wicFactory = CreateWICFactory();
+    com_ptr<IWICBitmapEncoder> encoder;
+    check_hresult(wicFactory->CreateEncoder(GUID_ContainerFormatPng, nullptr, encoder.put()));
+    check_hresult(encoder->Initialize(stream.get(), WICBitmapEncoderNoCache));
+
+    com_ptr<IWICBitmapFrameEncode> wicFrame;
+    com_ptr<IPropertyBag2> frameProperties;
+    check_hresult(encoder->CreateNewFrame(wicFrame.put(), frameProperties.put()));
+    check_hresult(wicFrame->Initialize(frameProperties.get()));
+
+    com_ptr<IWICImageEncoder> imageEncoder;
+    check_hresult(wicFactory->CreateImageEncoder(d2dDevice.get(), imageEncoder.put()));
+    check_hresult(imageEncoder->WriteFrame(d2dBitmap.get(), wicFrame.get(), nullptr));
+    check_hresult(wicFrame->Commit());
+    check_hresult(encoder->Commit());
+}
+
+com_ptr<ID3D11Texture2D> CreateTexture(com_ptr<ID3D11Device> const& d3dDevice, uint32_t width, uint32_t height)
+{
+    D3D11_TEXTURE2D_DESC textureDescription = {};
+    textureDescription.Width = width;
+    textureDescription.Height = height;
+    textureDescription.MipLevels = 1;
+    textureDescription.ArraySize = 1;
+    textureDescription.Format = DXGI_FORMAT::DXGI_FORMAT_B8G8R8A8_UNORM;
+    textureDescription.SampleDesc.Count = 1;
+    textureDescription.SampleDesc.Quality = 0;
+    textureDescription.Usage = D3D11_USAGE::D3D11_USAGE_DEFAULT;
+    textureDescription.BindFlags = D3D11_BIND_FLAG::D3D11_BIND_RENDER_TARGET | D3D11_BIND_FLAG::D3D11_BIND_SHADER_RESOURCE;
+    textureDescription.CPUAccessFlags = 0;
+    textureDescription.MiscFlags = 0;
+    com_ptr<ID3D11Texture2D> texture;
+    check_hresult(d3dDevice->CreateTexture2D(&textureDescription, nullptr, texture.put()));
+
+    return texture;
+}
+
+com_ptr<ID2D1PathGeometry> BuildGeometry(com_ptr<ID2D1Factory1> const& d2dFactory)
+{
     com_ptr<ID2D1PathGeometry> pathGeometry;
     check_hresult(d2dFactory->CreatePathGeometry(pathGeometry.put()));
     com_ptr<ID2D1GeometrySink> geometrySink;
@@ -76,45 +136,5 @@ int main()
     geometrySink->EndFigure(D2D1_FIGURE_END_CLOSED);
     check_hresult(geometrySink->Close());
 
-    // Draw to the render target
-    d2dContext->BeginDraw();
-    d2dContext->Clear(D2D1::ColorF(0, 0));
-    d2dContext->PushLayer(D2D1::LayerParameters(D2D1::InfiniteRect(), pathGeometry.get()), nullptr);
-    d2dContext->DrawBitmap(d2dBitmap.get(), &D2D1::RectF(0, 0, 350, 350), 1.0f, D2D1_BITMAP_INTERPOLATION_MODE_LINEAR, &D2D1::RectF(350, 550, 700, 900));
-    d2dContext->PopLayer();
-    check_hresult(d2dContext->EndDraw());
-
-    // Get the file stream
-    auto randomAccessStream = file.OpenAsync(FileAccessMode::ReadWrite).get();
-    auto stream = CreateStreamFromRandomAccessStream(randomAccessStream);
-
-    // Encode the snapshot
-    // TODO: dpi?
-    auto dpi = 96.0f;
-    WICImageParameters params = {};
-    params.PixelFormat.format = DXGI_FORMAT_B8G8R8A8_UNORM;
-    params.PixelFormat.alphaMode = D2D1_ALPHA_MODE_PREMULTIPLIED;
-    params.DpiX = dpi;
-    params.DpiY = dpi;
-    params.PixelWidth = finalTextureDescription.Width;
-    params.PixelHeight = finalTextureDescription.Height;
-
-    auto wicFactory = CreateWICFactory();
-    com_ptr<IWICBitmapEncoder> encoder;
-    check_hresult(wicFactory->CreateEncoder(GUID_ContainerFormatPng, nullptr, encoder.put()));
-    check_hresult(encoder->Initialize(stream.get(), WICBitmapEncoderNoCache));
-
-    com_ptr<IWICBitmapFrameEncode> wicFrame;
-    com_ptr<IPropertyBag2> frameProperties;
-    check_hresult(encoder->CreateNewFrame(wicFrame.put(), frameProperties.put()));
-    check_hresult(wicFrame->Initialize(frameProperties.get()));
-
-    com_ptr<IWICImageEncoder> imageEncoder;
-    check_hresult(wicFactory->CreateImageEncoder(d2dDevice.get(), imageEncoder.put()));
-    check_hresult(imageEncoder->WriteFrame(d2dTargetBitmap.get(), wicFrame.get(), &params));
-    check_hresult(wicFrame->Commit());
-    check_hresult(encoder->Commit());
-
-    printf("Done!\nOpening file...\n");
-    Launcher::LaunchFileAsync(file).get();
+    return pathGeometry;
 }
