@@ -35,14 +35,11 @@ IAsyncAction MainAsync()
 
     // Take a snapshot
     auto frame = co_await CaptureSnapshot::TakeAsync(device, item);  
-    auto frameTexture = GetDXGIInterfaceFromObject<ID3D11Texture2D>(frame);
-    D3D11_TEXTURE2D_DESC textureDesc = {};
-    frameTexture->GetDesc(&textureDesc);
-    auto dxgiFrameTexture = frameTexture.as<IDXGISurface>();
+    auto frameTexture = GetDXGIInterfaceFromObject<IDXGISurface>(frame);
 
     // Get a D2D bitmap for our snapshot
     com_ptr<ID2D1Bitmap1> d2dBitmap;
-    check_hresult(d2dContext->CreateBitmapFromDxgiSurface(dxgiFrameTexture.get(), nullptr, d2dBitmap.put()));
+    check_hresult(d2dContext->CreateBitmapFromDxgiSurface(frameTexture.get(), nullptr, d2dBitmap.put()));
 
     // Create our render target
     auto finalTexture = CreateTexture(d3dDevice, 350, 350);
