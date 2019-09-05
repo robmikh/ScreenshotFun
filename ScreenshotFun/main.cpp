@@ -4,16 +4,51 @@
 using namespace winrt;
 using namespace Windows::Foundation;
 using namespace Windows::Graphics::Capture;
+using namespace Windows::Graphics::DirectX;
 using namespace Windows::Graphics::DirectX::Direct3D11;
 using namespace Windows::Storage;
 using namespace Windows::System;
+using namespace Windows::UI::Composition;
+using namespace Windows::UI::Composition::Core;
 
 IAsyncAction SaveBitmapToFileAsync(com_ptr<ID2D1Device> const& d2dDevice, com_ptr<ID2D1Bitmap1> const& d2dBitmap, StorageFile const& file);
 com_ptr<ID3D11Texture2D> CreateTexture(com_ptr<ID3D11Device> const& d3dDevice, uint32_t width, uint32_t height);
 com_ptr<ID2D1PathGeometry> BuildGeometry(com_ptr<ID2D1Factory1> const& d2dFactory, uint32_t width, uint32_t height);
 
+template <typename T, typename ... Args>
+IAsyncOperation<T> CreateOnThreadAsync(winrt::Windows::System::DispatcherQueue const& threadQueue, Args ... args)
+{
+    wil::shared_event initialized(wil::EventOptions::None);
+    T thing{ nullptr };
+    winrt::check_bool(threadQueue.TryEnqueue([=, &thing, &initialized]()
+        {
+            thing = T(args...);
+            initialized.SetEvent();
+        }));
+    co_await winrt::resume_on_signal(initialized.get());
+    co_return thing;
+}
+
+template <typename T, typename ... Args>
+IAsyncOperation<T> CreateOnThreadAsync(DispatcherQueue const& threadQueue, Args ... args)
+{
+    wil::shared_event initialized(wil::EventOptions::None);
+    T thing{ nullptr };
+    winrt::check_bool(threadQueue.TryEnqueue([=, &thing, &initialized]()
+        {
+            thing = T(args...);
+            initialized.SetEvent();
+        }));
+    co_await winrt::resume_on_signal(initialized.get());
+    co_return thing;
+}
+
 IAsyncAction MainAsync()
 {
+    // Setup a thread that pumps messages
+    auto dispatcherController = DispatcherQueueController::CreateOnDedicatedThread();
+    auto compositorThread = dispatcherController.DispatcherQueue();
+
     // Get the primary monitor
     auto monitor = MonitorFromWindow(GetDesktopWindow(), MONITOR_DEFAULTTOPRIMARY);
     auto item = CreateCaptureItemForMonitor(monitor);
@@ -33,6 +68,10 @@ IAsyncAction MainAsync()
     auto d2dDevice = CreateD2DDevice(d2dFactory, d3dDevice);
     winrt::com_ptr<ID2D1DeviceContext> d2dContext;
     check_hresult(d2dDevice->CreateDeviceContext(D2D1_DEVICE_CONTEXT_OPTIONS_NONE, d2dContext.put()));
+
+    auto compositorController = co_await CreateOnThreadAsync<CompositorController>(compositorThread);
+    auto compositor = compositorController.Compositor();
+    auto compGraphics = CreateCompositionGraphicsDevice(compositor, d2dDevice.get());
 
     // Take a snapshot
     auto frame = co_await CaptureSnapshot::TakeAsync(device, item);  
@@ -68,6 +107,16 @@ IAsyncAction MainAsync()
     d2dContext->DrawBitmap(d2dBitmap.get(), &D2D1::RectF(0, 0, renderTargetWidth, renderTargetHeight), 1.0f, D2D1_BITMAP_INTERPOLATION_MODE_LINEAR, &sourceRect);
     d2dContext->PopLayer();
     check_hresult(d2dContext->EndDraw());
+
+    // Draw our resulting bitmap to a dcomp surface
+    auto surface = compGraphics.CreateDrawingSurface({ (float)renderTargetWidth, (float)renderTargetHeight }, DirectXPixelFormat::B8G8R8A8UIntNormalized, DirectXAlphaMode::Premultiplied);
+    {
+        auto surfaceContext = SurfaceContext(surface);
+        auto surfaceD2DContext = surfaceContext.GetDeviceContext();
+
+        surfaceD2DContext->DrawImage(d2dTargetBitmap.get());
+    }
+    compositorController.Commit();
 
     co_await SaveBitmapToFileAsync(d2dDevice, d2dTargetBitmap, file);
 

@@ -3,6 +3,8 @@
 #include <Unknwn.h>
 #include <inspectable.h>
 
+#include <wil/cppwinrt.h>
+
 // WinRT
 #include <winrt/Windows.Foundation.h>
 #include <winrt/Windows.Foundation.Collections.h>
@@ -13,6 +15,7 @@
 #include <winrt/Windows.System.h>
 #include <winrt/Windows.UI.h>
 #include <winrt/Windows.UI.Composition.h>
+#include <winrt/Windows.UI.Composition.Core.h>
 #include <winrt/Windows.UI.Composition.Desktop.h>
 #include <winrt/Windows.UI.Popups.h>
 #include <winrt/Windows.Graphics.Capture.h>
@@ -26,6 +29,9 @@
 #include <atomic>
 #include <memory>
 #include <filesystem>
+
+// WIL
+#include <wil/resource.h>
 
 // D3D
 #include <d3d11_4.h>
