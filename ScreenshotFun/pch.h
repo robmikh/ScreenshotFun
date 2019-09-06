@@ -29,6 +29,7 @@
 #include <atomic>
 #include <memory>
 #include <filesystem>
+#include <future>
 
 // WIL
 #include <wil/resource.h>

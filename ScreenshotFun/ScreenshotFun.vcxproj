@@ -104,6 +104,7 @@
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="CaptureSnapshot.cpp" />
+    <ClCompile Include="DummyWindow.cpp" />
     <ClCompile Include="main.cpp" />
     <ClCompile Include="pch.cpp" />
   </ItemGroup>
@@ -113,8 +114,10 @@
     <ClInclude Include="completionSource.h" />
     <ClInclude Include="composition.interop.h" />
     <ClInclude Include="d3dHelpers.h" />
+    <ClInclude Include="DesktopWindow.h" />
     <ClInclude Include="direct3d11.interop.h" />
     <ClInclude Include="dispatcherqueue.interop.h" />
+    <ClInclude Include="DummyWindow.h" />
     <ClInclude Include="pch.h" />
     <ClInclude Include="stream.interop.h" />
   </ItemGroup>

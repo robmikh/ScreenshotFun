@@ -1,5 +1,6 @@
 ﻿#include "pch.h"
 #include "CaptureSnapshot.h"
+#include "DummyWindow.h"
 
 using namespace winrt;
 using namespace Windows::Foundation;
@@ -14,6 +15,7 @@ using namespace Windows::UI::Composition::Core;
 IAsyncAction SaveBitmapToFileAsync(com_ptr<ID2D1Device> const& d2dDevice, com_ptr<ID2D1Bitmap1> const& d2dBitmap, StorageFile const& file);
 com_ptr<ID3D11Texture2D> CreateTexture(com_ptr<ID3D11Device> const& d3dDevice, uint32_t width, uint32_t height);
 com_ptr<ID2D1PathGeometry> BuildGeometry(com_ptr<ID2D1Factory1> const& d2dFactory, uint32_t width, uint32_t height);
+IAsyncAction ShowBitmapAsync(DispatcherQueue const& threadQueue, CompositorController const& compositorController, CompositionGraphicsDevice const& compGraphics, com_ptr<ID2D1Bitmap1> const& bitmap);
 
 template <typename T, typename ... Args>
 IAsyncOperation<T> CreateOnThreadAsync(winrt::Windows::System::DispatcherQueue const& threadQueue, Args ... args)
@@ -21,24 +23,24 @@ IAsyncOperation<T> CreateOnThreadAsync(winrt::Windows::System::DispatcherQueue c
     wil::shared_event initialized(wil::EventOptions::None);
     T thing{ nullptr };
     winrt::check_bool(threadQueue.TryEnqueue([=, &thing, &initialized]()
-        {
-            thing = T(args...);
-            initialized.SetEvent();
-        }));
+    {
+        thing = T(args...);
+        initialized.SetEvent();
+    }));
     co_await winrt::resume_on_signal(initialized.get());
     co_return thing;
 }
 
 template <typename T, typename ... Args>
-IAsyncOperation<T> CreateOnThreadAsync(DispatcherQueue const& threadQueue, Args ... args)
+std::future<std::shared_ptr<T>> CreateSharedOnThreadAsync(winrt::Windows::System::DispatcherQueue const& threadQueue, Args ... args)
 {
     wil::shared_event initialized(wil::EventOptions::None);
-    T thing{ nullptr };
+    std::shared_ptr<T> thing{ nullptr };
     winrt::check_bool(threadQueue.TryEnqueue([=, &thing, &initialized]()
-        {
-            thing = T(args...);
-            initialized.SetEvent();
-        }));
+    {
+        thing = std::make_shared<T>(args...);
+        initialized.SetEvent();
+    }));
     co_await winrt::resume_on_signal(initialized.get());
     co_return thing;
 }
@@ -108,15 +110,7 @@ IAsyncAction MainAsync()
     d2dContext->PopLayer();
     check_hresult(d2dContext->EndDraw());
 
-    // Draw our resulting bitmap to a dcomp surface
-    auto surface = compGraphics.CreateDrawingSurface({ (float)renderTargetWidth, (float)renderTargetHeight }, DirectXPixelFormat::B8G8R8A8UIntNormalized, DirectXAlphaMode::Premultiplied);
-    {
-        auto surfaceContext = SurfaceContext(surface);
-        auto surfaceD2DContext = surfaceContext.GetDeviceContext();
-
-        surfaceD2DContext->DrawImage(d2dTargetBitmap.get());
-    }
-    compositorController.Commit();
+    co_await ShowBitmapAsync(compositorThread, compositorController, compGraphics, d2dTargetBitmap);
 
     co_await SaveBitmapToFileAsync(d2dDevice, d2dTargetBitmap, file);
 
@@ -127,6 +121,10 @@ IAsyncAction MainAsync()
 int main()
 {
     init_apartment();
+
+    // Register window classes
+    DummyWindow::RegisterWindowClass();
+
     MainAsync().get(); // synchronous
     return 0;
 }
@@ -196,4 +194,38 @@ com_ptr<ID2D1PathGeometry> BuildGeometry(com_ptr<ID2D1Factory1> const& d2dFactor
     check_hresult(geometrySink->Close());
 
     return pathGeometry;
+}
+
+IAsyncAction ShowBitmapAsync(DispatcherQueue const& threadQueue, CompositorController const& compositorController, CompositionGraphicsDevice const& compGraphics, com_ptr<ID2D1Bitmap1> const& bitmap)
+{
+    auto compositor = compositorController.Compositor();
+
+    auto size = bitmap->GetSize();
+
+    // Draw our resulting bitmap to a dcomp surface
+    auto surface = compGraphics.CreateDrawingSurface({ size.width, size.height }, DirectXPixelFormat::B8G8R8A8UIntNormalized, DirectXAlphaMode::Premultiplied);
+    {
+        auto surfaceContext = SurfaceContext(surface);
+        auto surfaceD2DContext = surfaceContext.GetDeviceContext();
+
+        surfaceD2DContext->DrawImage(bitmap.get());
+    }
+    compositorController.Commit();
+
+    // Let's put it in the tree
+    auto window = co_await CreateSharedOnThreadAsync<DummyWindow>(threadQueue);
+    auto visual = compositor.CreateSpriteVisual();
+    auto target = CreateDesktopWindowTarget(compositor, window->m_window, false);
+    target.Root(visual);
+
+    auto brush = compositor.CreateSurfaceBrush();
+    brush.Surface(surface);
+    brush.Stretch(CompositionStretch::Uniform);
+
+    visual.RelativeSizeAdjustment({ 1, 1 });
+    visual.Brush(brush);
+    compositorController.Commit();
+
+    // Wait until the window closes
+    co_await winrt::resume_on_signal(window->Closed().get());
 }
