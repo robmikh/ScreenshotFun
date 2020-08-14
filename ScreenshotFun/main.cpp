@@ -19,6 +19,7 @@ namespace util
 winrt::IAsyncAction SaveBitmapToFileAsync(winrt::com_ptr<ID2D1Device> const& d2dDevice, winrt::com_ptr<ID2D1Bitmap1> const& d2dBitmap, winrt::StorageFile const& file);
 winrt::com_ptr<ID3D11Texture2D> CreateTexture(winrt::com_ptr<ID3D11Device> const& d3dDevice, uint32_t width, uint32_t height);
 winrt::com_ptr<ID2D1PathGeometry> BuildGeometry(winrt::com_ptr<ID2D1Factory1> const& d2dFactory, uint32_t width, uint32_t height);
+winrt::com_ptr<ID2D1Bitmap1> CreateRotatedBitmap(winrt::com_ptr<ID3D11Device> const& d3dDevice, winrt::com_ptr<ID2D1Device> const& d2dDevice, winrt::com_ptr<ID2D1Bitmap1> const& sourceBitmap);
 
 winrt::IAsyncAction MainAsync()
 {
@@ -50,8 +51,11 @@ winrt::IAsyncAction MainAsync()
     winrt::com_ptr<ID2D1Bitmap1> d2dBitmap;
     winrt::check_hresult(d2dContext->CreateBitmapFromDxgiSurface(frameTexture.get(), nullptr, d2dBitmap.put()));
 
+    // Rotate our bitmap 90 degrees
+    auto rotatedBitmap = CreateRotatedBitmap(d3dDevice, d2dDevice, d2dBitmap);
+
     // Create our render target
-    auto renderTargetWidth = 350;
+    auto renderTargetWidth = 650;
     auto renderTargetHeight = 350;
     auto finalTexture = CreateTexture(d3dDevice, renderTargetWidth, renderTargetHeight);
     auto dxgiFinalTexture = finalTexture.as<IDXGISurface>();
@@ -65,15 +69,21 @@ winrt::IAsyncAction MainAsync()
     auto geometry = BuildGeometry(d2dFactory, renderTargetWidth, renderTargetHeight);
 
     // Compute the rect we want to copy from the snapshot bitmap
-    auto left = (itemSize.Width - renderTargetWidth) / 2.0f;
-    auto top = (itemSize.Height - renderTargetHeight) / 2.0f;
+    // Note that the item width and height are flipped here to reflect the width and height of 
+    // our rotated bitmap.
+    auto left = (itemSize.Height - renderTargetWidth) / 2.0f;
+    auto top = (itemSize.Width - renderTargetHeight) / 2.0f;
+    // TOOD: This source rect doesn't work quite right because the width is taken from the prerotated source. Need to fix to prevent clipping.
     auto sourceRect = D2D1::RectF(left, top, left + renderTargetWidth, top + renderTargetHeight);
 
     // Draw to the render target
     d2dContext->BeginDraw();
     d2dContext->Clear(D2D1::ColorF(0, 0));
     d2dContext->PushLayer(D2D1::LayerParameters(D2D1::InfiniteRect(), geometry.get()), nullptr);
-    d2dContext->DrawBitmap(d2dBitmap.get(), &D2D1::RectF(0, 0, renderTargetWidth, renderTargetHeight), 1.0f, D2D1_BITMAP_INTERPOLATION_MODE_LINEAR, &sourceRect);
+    d2dContext->SetTransform(
+        D2D1::Matrix3x2F::Rotation(-90.0f, D2D1::Point2F(renderTargetWidth / 2.0f, renderTargetHeight / 2.0f))
+    );
+    d2dContext->DrawBitmap(rotatedBitmap.get(), &D2D1::RectF(0, 0, renderTargetWidth, renderTargetHeight), 1.0f, D2D1_BITMAP_INTERPOLATION_MODE_LINEAR, &sourceRect);
     d2dContext->PopLayer();
     winrt::check_hresult(d2dContext->EndDraw());
 
@@ -155,4 +165,39 @@ winrt::com_ptr<ID2D1PathGeometry> BuildGeometry(winrt::com_ptr<ID2D1Factory1> co
     winrt::check_hresult(geometrySink->Close());
 
     return pathGeometry;
+}
+
+winrt::com_ptr<ID2D1Bitmap1> CreateRotatedBitmap(
+    winrt::com_ptr<ID3D11Device> const& d3dDevice, 
+    winrt::com_ptr<ID2D1Device> const& d2dDevice,
+    winrt::com_ptr<ID2D1Bitmap1> const& sourceBitmap)
+{
+    // Get our bitmap dimmensions
+    winrt::com_ptr<IDXGISurface> sourceSurface;
+    winrt::check_hresult(sourceBitmap->GetSurface(sourceSurface.put()));
+    DXGI_SURFACE_DESC desc = {};
+    winrt::check_hresult(sourceSurface->GetDesc(&desc));
+
+    // Create a d2d context
+    winrt::com_ptr<ID2D1DeviceContext> d2dContext;
+    winrt::check_hresult(d2dDevice->CreateDeviceContext(D2D1_DEVICE_CONTEXT_OPTIONS_NONE, d2dContext.put()));
+
+    // Create our rotated bitmap
+    auto rotatedTexture = CreateTexture(d3dDevice, desc.Height, desc.Width);
+    winrt::com_ptr<ID2D1Bitmap1> d2dRotatedBitmap;
+    winrt::check_hresult(d2dContext->CreateBitmapFromDxgiSurface(rotatedTexture.as<IDXGISurface>().get(), nullptr, d2dRotatedBitmap.put()));
+
+    // Draw into the bitmap
+    d2dContext->SetTarget(d2dRotatedBitmap.get());
+    d2dContext->BeginDraw();
+    d2dContext->Clear(D2D1::ColorF(0, 0));
+    d2dContext->SetTransform(
+        D2D1::Matrix3x2F::Rotation(90.0f, D2D1::Point2F(0, 0)) *
+        D2D1::Matrix3x2F::Translation(desc.Height, 0)
+    );
+    auto sourceRect = D2D1::RectF(0, 0, desc.Width, desc.Height);
+    d2dContext->DrawBitmap(sourceBitmap.get(), &D2D1::RectF(0, 0, desc.Width, desc.Height), 1.0f, D2D1_BITMAP_INTERPOLATION_MODE_LINEAR, &sourceRect);
+    winrt::check_hresult(d2dContext->EndDraw());
+
+    return d2dRotatedBitmap;
 }
