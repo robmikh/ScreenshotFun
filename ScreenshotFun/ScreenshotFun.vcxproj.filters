@@ -11,13 +11,7 @@
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="pch.h" />
-    <ClInclude Include="capture.interop.h" />
     <ClInclude Include="CaptureSnapshot.h" />
     <ClInclude Include="completionSource.h" />
-    <ClInclude Include="composition.interop.h" />
-    <ClInclude Include="d3dHelpers.h" />
-    <ClInclude Include="direct3d11.interop.h" />
-    <ClInclude Include="dispatcherqueue.interop.h" />
-    <ClInclude Include="stream.interop.h" />
   </ItemGroup>
 </Project>
