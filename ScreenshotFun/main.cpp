@@ -22,9 +22,8 @@ winrt::com_ptr<ID2D1PathGeometry> BuildGeometry(winrt::com_ptr<ID2D1Factory1> co
 
 winrt::IAsyncAction MainAsync()
 {
-    // Get the primary monitor
-    auto monitor = MonitorFromWindow(GetDesktopWindow(), MONITOR_DEFAULTTOPRIMARY);
-    auto item = util::CreateCaptureItemForMonitor(monitor);
+    // Get all monitors
+    auto item = util::CreateCaptureItemForMonitor(nullptr);
     auto itemSize = item.Size();
 
     // Get a file to save the screenshot
@@ -50,34 +49,7 @@ winrt::IAsyncAction MainAsync()
     winrt::com_ptr<ID2D1Bitmap1> d2dBitmap;
     winrt::check_hresult(d2dContext->CreateBitmapFromDxgiSurface(frameTexture.get(), nullptr, d2dBitmap.put()));
 
-    // Create our render target
-    auto renderTargetWidth = 350;
-    auto renderTargetHeight = 350;
-    auto finalTexture = CreateTexture(d3dDevice, renderTargetWidth, renderTargetHeight);
-    auto dxgiFinalTexture = finalTexture.as<IDXGISurface>();
-    winrt::com_ptr<ID2D1Bitmap1> d2dTargetBitmap;
-    winrt::check_hresult(d2dContext->CreateBitmapFromDxgiSurface(dxgiFinalTexture.get(), nullptr, d2dTargetBitmap.put()));
-
-    // Set the render target as our current target
-    d2dContext->SetTarget(d2dTargetBitmap.get());
-
-    // Create the geometry clip
-    auto geometry = BuildGeometry(d2dFactory, renderTargetWidth, renderTargetHeight);
-
-    // Compute the rect we want to copy from the snapshot bitmap
-    auto left = (itemSize.Width - renderTargetWidth) / 2.0f;
-    auto top = (itemSize.Height - renderTargetHeight) / 2.0f;
-    auto sourceRect = D2D1::RectF(left, top, left + renderTargetWidth, top + renderTargetHeight);
-
-    // Draw to the render target
-    d2dContext->BeginDraw();
-    d2dContext->Clear(D2D1::ColorF(0, 0));
-    d2dContext->PushLayer(D2D1::LayerParameters(D2D1::InfiniteRect(), geometry.get()), nullptr);
-    d2dContext->DrawBitmap(d2dBitmap.get(), &D2D1::RectF(0, 0, renderTargetWidth, renderTargetHeight), 1.0f, D2D1_BITMAP_INTERPOLATION_MODE_LINEAR, &sourceRect);
-    d2dContext->PopLayer();
-    winrt::check_hresult(d2dContext->EndDraw());
-
-    co_await SaveBitmapToFileAsync(d2dDevice, d2dTargetBitmap, file);
+    co_await SaveBitmapToFileAsync(d2dDevice, d2dBitmap, file);
 
     printf("Done!\nOpening file...\n");
     co_await winrt::Launcher::LaunchFileAsync(file);
