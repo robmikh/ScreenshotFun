@@ -21,8 +21,8 @@ namespace util
     using namespace robmikh::common::desktop;
 }
 
-winrt::IAsyncOperation<winrt::IDirect3DSurface>
-CaptureSnapshot::TakeAsync(winrt::IDirect3DDevice const& device, winrt::GraphicsCaptureItem const& item)
+winrt::IDirect3DSurface
+CaptureSnapshot::Take(winrt::IDirect3DDevice const& device, winrt::GraphicsCaptureItem const& item)
 {
     auto d3dDevice = GetDXGIInterfaceFromObject<ID3D11Device>(device);
     winrt::com_ptr<ID3D11DeviceContext> d3dContext;
@@ -39,8 +39,9 @@ CaptureSnapshot::TakeAsync(winrt::IDirect3DDevice const& device, winrt::Graphics
         item.Size());
     auto session = framePool.CreateCaptureSession(item);
 
-    auto completion = completion_source<winrt::IDirect3DSurface>();
-    framePool.FrameArrived([session, d3dDevice, d3dContext, &completion](auto& framePool, auto&)
+    winrt::IDirect3DSurface result{ nullptr };
+    wil::shared_event captureEvent(wil::EventOptions::ManualReset);
+    framePool.FrameArrived([session, d3dDevice, d3dContext, &result, captureEvent](auto& framePool, auto&)
     {
         auto frame = framePool.TryGetNextFrame();
         auto frameTexture = GetDXGIInterfaceFromObject<ID3D11Texture2D>(frame.Surface());
@@ -58,17 +59,21 @@ CaptureSnapshot::TakeAsync(winrt::IDirect3DDevice const& device, winrt::Graphics
         d3dContext->CopyResource(textureCopy.get(), frameTexture.get());
         
         auto dxgiSurface = textureCopy.as<IDXGISurface>();
-        auto result = CreateDirect3DSurface(dxgiSurface.get());
+        result = CreateDirect3DSurface(dxgiSurface.get());
 
         // End the capture
         session.Close();
         framePool.Close();
 
-        // Complete the operation
-        completion.set(result);
+        // Signal that we're done
+        captureEvent.SetEvent();
     });
 
     session.StartCapture();
 
-    co_return co_await completion;
+    // Don't return until the capture is finished
+    captureEvent.wait();
+    WINRT_ASSERT(result != nullptr);
+
+    return result;
 }

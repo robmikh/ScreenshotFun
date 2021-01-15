@@ -43,7 +43,7 @@ winrt::IAsyncAction MainAsync()
     winrt::check_hresult(d2dDevice->CreateDeviceContext(D2D1_DEVICE_CONTEXT_OPTIONS_NONE, d2dContext.put()));
 
     // Take a snapshot
-    auto frame = co_await CaptureSnapshot::TakeAsync(device, item);  
+    auto frame = CaptureSnapshot::Take(device, item);  
     auto frameTexture = GetDXGIInterfaceFromObject<IDXGISurface>(frame);
 
     // Get a D2D bitmap for our snapshot
@@ -73,7 +73,12 @@ winrt::IAsyncAction MainAsync()
     d2dContext->BeginDraw();
     d2dContext->Clear(D2D1::ColorF(0, 0));
     d2dContext->PushLayer(D2D1::LayerParameters(D2D1::InfiniteRect(), geometry.get()), nullptr);
-    d2dContext->DrawBitmap(d2dBitmap.get(), &D2D1::RectF(0, 0, renderTargetWidth, renderTargetHeight), 1.0f, D2D1_BITMAP_INTERPOLATION_MODE_LINEAR, &sourceRect);
+    d2dContext->DrawBitmap(
+        d2dBitmap.get(), 
+        D2D1::RectF(0, 0, renderTargetWidth, renderTargetHeight), 
+        1.0f, 
+        D2D1_BITMAP_INTERPOLATION_MODE_LINEAR, 
+        &sourceRect);
     d2dContext->PopLayer();
     winrt::check_hresult(d2dContext->EndDraw());
 

@@ -12,6 +12,5 @@
   <ItemGroup>
     <ClInclude Include="pch.h" />
     <ClInclude Include="CaptureSnapshot.h" />
-    <ClInclude Include="completionSource.h" />
   </ItemGroup>
 </Project>
